@@ -71,3 +71,27 @@ def generate_weights(
             i += spots_to_be_filled
 
     return Ok(weights_matrix)
+
+
+def maximize_sharpe(
+        tickers_idxs: np.ndarray,
+        weights: np.ndarray,
+        daily_returns_matrix: np.ndarray,
+        Rf_yearly: float = 0.05) -> Result[tuple[float, np.ndarray], str]:
+
+    ANNUALIZATION_FACTOR = 252
+
+    R_daily = daily_returns_matrix[tickers_idxs].T
+    Rp_daily = R_daily @ weights.T
+    Rp_yearly = np.mean(Rp_daily, axis=0) * ANNUALIZATION_FACTOR
+    ER_yearly = Rp_yearly - Rf_yearly
+
+    cov_matrix = np.cov(R_daily, rowvar=False)
+    Var_daily = np.diag(weights @ cov_matrix @ weights.T)
+    Vol_yearly = np.sqrt(Var_daily * ANNUALIZATION_FACTOR)
+
+    SR = ER_yearly / Vol_yearly
+
+    optimal_idx = np.argmax(SR)
+
+    return Ok((SR[optimal_idx], weights[optimal_idx]))

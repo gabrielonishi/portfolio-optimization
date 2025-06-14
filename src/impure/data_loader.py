@@ -1,6 +1,8 @@
 import io
 import logging
-from datetime import date, timedelta
+import pathlib
+import pickle
+from datetime import date
 
 import numpy as np
 import pandas as pd
@@ -115,15 +117,88 @@ def _calculate_daily_returns(ticker: str, start_date: date, end_date: date):
     return Ok(array_returns)
 
 
-def run(start_date: date, end_date: date):
+def _build_daily_returns_dict(
+        tickers: list[str], start_date: date, end_date: date) -> Result[dict[str, np.ndarray], str]:
+    """
+    Builds a dictionary of daily returns for each ticker symbol.
+
+    Args:
+        tickers (list[str]): List of stock ticker symbols.
+        start_date (date): The start date for the data.
+        end_date (date): The end date for the data.
+
+    Returns:
+        Result[dict[str, np.ndarray], str]: A Result object containing a dictionary of daily returns on success,
+                                             or an error message on failure.
+    """
+    results = {}
+    for ticker in tickers:
+        result = _calculate_daily_returns(ticker, start_date, end_date)
+        if isinstance(result, Err):
+            logger.error(result.error)
+            results[ticker] = result
+        else:
+            results[ticker] = result.value
+
+    return Ok(results)
+
+
+def _save_daily_returns_to_file(
+        daily_returns: dict[str, np.ndarray], file_path: pathlib.Path) -> Result[None, str]:
+    """
+    Saves the daily returns dictionary to a file using pickle.
+
+    Args:
+        daily_returns (dict[str, np.ndarray]): Dictionary of daily returns.
+        file_path (str): Path to the file where the data will be saved.
+
+    Returns:
+        Result[None, str]: A Result object indicating success or failure.
+    """
+    try:
+        with open(file_path, mode='wb') as f:
+            pickle.dump(daily_returns, f)
+        return Ok(None)
+    except Exception as e:
+        return Err(f"Failed to save daily returns to {file_path}: {e}")
+
+
+def load_daily_returns_from_file(file_path: pathlib.Path) -> Result[dict[str, np.ndarray], str]:
+    """
+    Loads daily returns from a file using pickle.
+
+    Args:
+        file_path (str): Path to the file where the data is saved.
+
+    Returns:
+        Result[dict[str, np.ndarray], str]: A Result object containing the daily returns dictionary on success,
+                                             or an error message on failure.
+    """
+    try:
+        with open(file_path, mode='rb') as f:
+            daily_returns = pickle.load(f)
+        return Ok(daily_returns)
+    except Exception as e:
+        return Err(f"Failed to load daily returns from {file_path}: {e}")
+
+
+def run(start_date: date,
+        end_date: date,
+        saved_copy_filepath: pathlib.Path | None = None):
+
     tickers = _fetch_tickers_from_wikipedia()
     if isinstance(tickers, Err):
         return tickers
 
+    daily_returns_dict = _build_daily_returns_dict(
+        tickers.value, start_date, end_date)
+    if isinstance(daily_returns_dict, Err):
+        return daily_returns_dict
 
-if __name__ == "__main__":
-    # Example usage
-    start_date = date.today() - timedelta(days=30)
-    end_date = date.today()
-    r = _calculate_daily_returns('MMM', date(2023, 1, 1), date(2023, 3, 1))
-    print(r)
+    if saved_copy_filepath:
+        save_result = _save_daily_returns_to_file(
+            daily_returns_dict.value, saved_copy_filepath)
+        if isinstance(save_result, Err):
+            return save_result
+
+    return Ok(daily_returns_dict.value)

@@ -1,6 +1,7 @@
 import pathlib
 import sys
 
+import pure.simulate
 from impure import config, data_loader
 from pure.result import Err
 
@@ -11,13 +12,12 @@ def main() -> None:
     root_dir = pathlib.Path(sys.argv[0]).parent.parent.resolve()
     logger = config.setup_logging(
         root_dir / "config" / "logging.yaml", logging_name="dev")
-
+    settings = config.get_settings(
+        root_dir / "config" / "settings.yaml")
     if ENV == 'PROD':
-        settings = config.get_settings(
-            root_dir / "config" / "settings.yaml", env='PROD')
 
-        start_date = settings['start_date']
-        end_date = settings['end_date']
+        start_date = settings['PROD']['start_date']
+        end_date = settings['PROD']['end_date']
 
         daily_returns_dict = data_loader.run(
             start_date=start_date,
@@ -39,7 +39,15 @@ def main() -> None:
             sys.exit(1)
         logger.info("Daily returns data loaded successfully from file.")
 
-    print(daily_returns_dict.value)
+    combinations = pure.simulate.generates_portfolios_by_idxs(
+        assets_per_portfolio=settings['ASSETS_PER_PORTFOLIO'],
+        total_assets=settings['TOTAL_ASSETS']
+    )
+    if isinstance(combinations, Err):
+        logger.error(combinations.error)
+        sys.exit(1)
+
+    logger.debug(combinations.value.shape)
 
 
 if __name__ == "__main__":

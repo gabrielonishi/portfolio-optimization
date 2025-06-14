@@ -17,7 +17,7 @@ def setup_logging(default_path: Path, logging_name: str = 'main') -> logging.Log
             f"Logging configuration file {default_path} not found.")
 
 
-def get_settings(settings_path: Path, env: str = 'PROD') -> dict:
+def get_settings(settings_path: Path) -> dict:
     """
     Load settings from a YAML file based on the specified environment.
 
@@ -31,7 +31,4 @@ def get_settings(settings_path: Path, env: str = 'PROD') -> dict:
     with open(settings_path, 'r', encoding='utf-8') as f:
         settings = yaml.safe_load(f)
 
-    if env in settings:
-        return settings[env]
-    else:
-        raise KeyError(f"Environment '{env}' not found in settings.")
+    return settings

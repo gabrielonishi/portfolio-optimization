@@ -1,8 +1,11 @@
 import io
 import logging
+from datetime import date, timedelta
 
+import numpy as np
 import pandas as pd
 import requests
+import yfinance as yf
 
 from pure.result import Err, Ok, Result
 
@@ -53,7 +56,7 @@ def _get_tickers_from_table(tables: list[pd.DataFrame]) -> Result[list[str], str
     return Err("No valid table found with 'Company', 'Exchange', and 'Symbol' columns.")
 
 
-def fetch_tickers_from_wikipedia() -> Result[list[str], str]:
+def _fetch_tickers_from_wikipedia() -> Result[list[str], str]:
 
     DOW_JONES_WIKI_URL = 'https://en.wikipedia.org/wiki/Dow_Jones_Industrial_Average'
 
@@ -68,3 +71,59 @@ def fetch_tickers_from_wikipedia() -> Result[list[str], str]:
         return tickers
 
     return Ok(tickers.value)
+
+
+def _load_ticker_data(ticker: str, start_date: date, end_date: date) -> Result[pd.DataFrame, str]:
+    """
+    Loads historical stock data for a given ticker symbol between specified dates.
+
+    Args:
+        ticker (str): The stock ticker symbol.
+        start_date (date): The start date for the data.
+        end_date (date): The end date for the data.
+
+    Returns:
+        Result[pd.DataFrame, str]: A Result object containing the DataFrame with stock data on success,
+                                    or an error message on failure.
+    """
+    start = start_date.isoformat()
+    end = end_date.isoformat()
+    try:
+        df = yf.download(ticker, start=start, end=end, progress=False)
+        if df is None:
+            return Err(f"Failed to download data for ticker {ticker}.")
+        if df.empty:
+            return Err(f"No data found for ticker {ticker} between {start_date} and {end_date}.")
+        return Ok(df)
+    except Exception as e:
+        return Err(f"Failed to load data for ticker {ticker}: {e}")
+
+
+def _calculate_daily_returns(ticker: str, start_date: date, end_date: date):
+    ticker_data = _load_ticker_data(ticker, start_date, end_date)
+    if isinstance(ticker_data, Err):
+        logger.error(ticker_data.error)
+        return ticker_data
+
+    ticker_df = ticker_data.value
+    if 'Close' not in ticker_df.columns or ticker_df['Close'].empty:
+        return Err(f"No 'Close' column found in data for ticker {ticker}.")
+
+    daily_returns = ticker_df['Close'] / ticker_df['Close'].shift(1) - 1
+    array_returns = np.array(daily_returns[ticker][1:], dtype=np.float64)
+
+    return Ok(array_returns)
+
+
+def run(start_date: date, end_date: date):
+    tickers = _fetch_tickers_from_wikipedia()
+    if isinstance(tickers, Err):
+        return tickers
+
+
+if __name__ == "__main__":
+    # Example usage
+    start_date = date.today() - timedelta(days=30)
+    end_date = date.today()
+    r = _calculate_daily_returns('MMM', date(2023, 1, 1), date(2023, 3, 1))
+    print(r)

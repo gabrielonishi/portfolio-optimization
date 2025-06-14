@@ -39,15 +39,16 @@ def main() -> None:
             sys.exit(1)
         logger.info("Daily returns data loaded successfully from file.")
 
-    combinations = pure.simulate.generates_portfolios_by_idxs(
+    weights = pure.simulate.generate_weights(
         assets_per_portfolio=settings['ASSETS_PER_PORTFOLIO'],
-        total_assets=settings['TOTAL_ASSETS']
+        max_weight_per_asset=settings['MAX_WEIGHT_PER_ASSET'],
+        num_simulated_weights=settings['NUM_SIMULATED_WEIGHTS']
     )
-    if isinstance(combinations, Err):
-        logger.error(combinations.error)
+    if isinstance(weights, Err):
+        logger.error(weights.error)
         sys.exit(1)
-
-    logger.debug(combinations.value.shape)
+    logger.info("Weights generated successfully.")
+    logger.info(f"Generated {len(weights.value)} weight combinations.")
 
 
 if __name__ == "__main__":

@@ -27,3 +27,47 @@ def generates_portfolios_by_idxs(assets_per_portfolio: int, total_assets: int) -
     portfolios = list(combinations(range(total_assets), assets_per_portfolio))
 
     return Ok(np.array(portfolios))
+
+
+def generate_weights(
+        assets_per_portfolio: int,
+        max_weight_per_asset: float,
+        num_simulated_weights: int) -> Result[np.ndarray, str]:
+    '''
+    Generates a matrix of random weights for portfolios.
+    Args:
+        assets_per_portfolio (int): Number of assets in each portfolio.
+        max_weight_per_asset (float): Maximum weight allowed for each asset.
+        num_simulated_weights (int): Number of weight combinations to generate.
+    Returns:
+        Result[np.ndarray, str]: A Result object containing a matrix of weights on success,
+                                  or an error message on failure.
+    '''
+
+    if 1 / assets_per_portfolio > max_weight_per_asset:
+        return Err(
+            f"Max weight {max_weight_per_asset} is too low for {assets_per_portfolio} assets. "
+            f"Minimum weight per asset must be at least {1 / assets_per_portfolio}."
+        )
+
+    weights_matrix = np.empty(
+        (num_simulated_weights, assets_per_portfolio), dtype=np.float64)
+    portfolio_size = np.ones(assets_per_portfolio)
+
+    BATCH_SIZE_MULTIPLIER = 1.2
+
+    i = 0
+
+    while i < num_simulated_weights:
+        spots_left = num_simulated_weights - i
+        batch_size = int(BATCH_SIZE_MULTIPLIER * spots_left)
+        batch = np.random.dirichlet(alpha=portfolio_size, size=batch_size)
+        valid_weights = batch[np.all(batch <= max_weight_per_asset, axis=1)]
+        spots_to_be_filled = min(len(valid_weights), num_simulated_weights - i)
+
+        if spots_to_be_filled > 0:
+            weights_matrix[i:i +
+                           spots_to_be_filled] = valid_weights[:spots_to_be_filled]
+            i += spots_to_be_filled
+
+    return Ok(weights_matrix)

@@ -95,3 +95,63 @@ def maximize_sharpe(
     optimal_idx = np.argmax(SR)
 
     return Ok((SR[optimal_idx], weights[optimal_idx]))
+
+
+def run(  # noqa: PLR0913, PLR0917
+        assets_per_portfolio: int,
+        total_assets: int,
+        max_weight_per_asset: float,
+        num_simulated_weights: int,
+        daily_returns_matrix: np.ndarray,
+        num_simulations: int | None = None
+) -> Result[tuple[float, np.ndarray], str]:
+    """
+    Runs the simulation to maximize the Sharpe ratio.
+
+    Args:
+        assets_per_portfolio (int): Number of assets in each portfolio.
+        total_assets (int): Total number of available assets.
+        max_weight_per_asset (float): Maximum weight allowed for each asset.
+        num_simulated_weights (int): Number of weight combinations to generate.
+        daily_returns_matrix (np.ndarray): Daily returns matrix.
+
+    Returns:
+        Result[tuple[float, np.ndarray], str]: A Result object containing the maximum Sharpe ratio
+                                                and the corresponding weights on success, or an error
+                                                message on failure.
+    """
+
+    portfolios_idxs = generates_portfolios_by_idxs(
+        assets_per_portfolio, total_assets
+    )
+    if isinstance(portfolios_idxs, Err):
+        return portfolios_idxs
+
+    if num_simulations is not None:
+        portfolios_idxs = portfolios_idxs.value[:num_simulations]
+    else:
+        portfolios_idxs = portfolios_idxs.value
+
+    max_sharpe = float('-inf')
+    optimal_weights = np.array([])
+
+    for portfolio_idxs in portfolios_idxs:
+        weights = generate_weights(
+            assets_per_portfolio, max_weight_per_asset, num_simulated_weights
+        )
+        if isinstance(weights, Err):
+            return weights
+
+        sharpe_result = maximize_sharpe(
+            portfolio_idxs, weights.value, daily_returns_matrix
+        )
+        if isinstance(sharpe_result, Err):
+            return sharpe_result
+
+        sharpe, weights = sharpe_result.value
+
+        if sharpe > max_sharpe:
+            max_sharpe = sharpe
+            optimal_weights = weights
+
+    return Ok((max_sharpe, optimal_weights))

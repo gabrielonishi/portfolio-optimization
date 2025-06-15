@@ -163,7 +163,7 @@ def _save_daily_returns_to_file(
         return Err(f"Failed to save daily returns to {file_path}: {e}")
 
 
-def load_daily_returns_from_file(file_path: pathlib.Path) -> Result[dict[str, np.ndarray], str]:
+def load_daily_returns_from_file(file_path: pathlib.Path) -> Result[np.ndarray, str]:
     """
     Loads daily returns from a file using pickle.
 
@@ -176,8 +176,10 @@ def load_daily_returns_from_file(file_path: pathlib.Path) -> Result[dict[str, np
     """
     try:
         with open(file_path, mode='rb') as f:
-            daily_returns = pickle.load(f)
-        return Ok(daily_returns)
+            daily_returns_dict = pickle.load(f)
+            daily_returns_matrix = np.stack([daily_returns_dict[ticker]
+                                             for ticker in daily_returns_dict.keys()])
+        return Ok(daily_returns_matrix)
     except Exception as e:
         return Err(f"Failed to load daily returns from {file_path}: {e}")
 
@@ -195,10 +197,15 @@ def run(start_date: date,
     if isinstance(daily_returns_dict, Err):
         return daily_returns_dict
 
+    print(daily_returns_dict)
+
     if saved_copy_filepath:
         save_result = _save_daily_returns_to_file(
             daily_returns_dict.value, saved_copy_filepath)
         if isinstance(save_result, Err):
             return save_result
 
-    return Ok(daily_returns_dict.value)
+    daily_returns_matrix = np.stack([daily_returns_dict.value[ticker]
+                                     for ticker in daily_returns_dict.value.keys()])
+
+    return Ok(daily_returns_matrix)

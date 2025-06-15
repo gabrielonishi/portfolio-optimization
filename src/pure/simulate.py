@@ -1,3 +1,4 @@
+import multiprocessing as mp
 from itertools import combinations
 
 import numpy as np
@@ -97,6 +98,50 @@ def maximize_sharpe(
     return Ok((SR[optimal_idx], weights[optimal_idx]))
 
 
+def maximize_sharpe_aux(
+        assets_per_portfolio: int,
+        max_weight_per_asset: float,
+        num_simulated_weights: int,
+        tickers_idxs: np.ndarray,
+        daily_returns_matrix: np.ndarray
+) -> Result[tuple[float, np.ndarray], str]:
+    """
+    Auxiliary function to maximize the Sharpe ratio for a given set of assets.
+
+    Args:
+        assets_per_portfolio (int): Number of assets in each portfolio.
+        max_weight_per_asset (float): Maximum weight allowed for each asset.
+        num_simulated_weights (int): Number of weight combinations to generate.
+        tickers_idxs (np.ndarray): Indices of the assets in the portfolio.
+        daily_returns_matrix (np.ndarray): Daily returns matrix.
+
+    Returns:
+        Result[tuple[float, np.ndarray], str]: A Result object containing the maximum Sharpe ratio
+                                                and the corresponding weights on success, or an error
+                                                message on failure.
+    """
+    max_sharpe = float('-inf')
+    optimal_weights = np.array([])
+    for ticker_idx in tickers_idxs:
+        weights = generate_weights(
+            assets_per_portfolio, max_weight_per_asset, num_simulated_weights
+        )
+        if isinstance(weights, Err):
+            return weights
+        sharpe_result = maximize_sharpe(
+            ticker_idx,
+            weights.value,
+            daily_returns_matrix
+        )
+        if isinstance(sharpe_result, Err):
+            return sharpe_result
+        sharpe, weights = sharpe_result.value
+        if sharpe > max_sharpe:
+            max_sharpe = sharpe
+            optimal_weights = weights
+    return Ok((max_sharpe, optimal_weights))
+
+
 def run(  # noqa: PLR0913, PLR0917
         assets_per_portfolio: int,
         total_assets: int,
@@ -132,24 +177,36 @@ def run(  # noqa: PLR0913, PLR0917
     else:
         portfolios_idxs = portfolios_idxs.value
 
+    # n_processes = mp.cpu_count()
+    n_processes = 1
+    batch_size = len(portfolios_idxs) // n_processes + 1
+    idxs_batches = [
+        portfolios_idxs[i:i + batch_size] for i in range(0, len(portfolios_idxs), batch_size)
+    ]
+
+    with mp.Pool(processes=n_processes) as pool:
+        results = pool.starmap(
+            maximize_sharpe_aux,
+            [
+                (
+                    assets_per_portfolio,
+                    max_weight_per_asset,
+                    num_simulated_weights,
+                    batch,
+                    daily_returns_matrix
+                )
+                for batch in idxs_batches
+            ]
+        )
+
     max_sharpe = float('-inf')
     optimal_weights = np.array([])
 
-    for portfolio_idxs in portfolios_idxs:
-        weights = generate_weights(
-            assets_per_portfolio, max_weight_per_asset, num_simulated_weights
-        )
-        if isinstance(weights, Err):
-            return weights
+    for result in results:
+        if isinstance(result, Err):
+            return result
 
-        sharpe_result = maximize_sharpe(
-            portfolio_idxs, weights.value, daily_returns_matrix
-        )
-        if isinstance(sharpe_result, Err):
-            return sharpe_result
-
-        sharpe, weights = sharpe_result.value
-
+        sharpe, weights = result.value
         if sharpe > max_sharpe:
             max_sharpe = sharpe
             optimal_weights = weights

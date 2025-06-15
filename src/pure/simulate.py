@@ -104,7 +104,7 @@ def maximize_sharpe_aux(
         num_simulated_weights: int,
         tickers_idxs: np.ndarray,
         daily_returns_matrix: np.ndarray
-) -> Result[tuple[float, np.ndarray], str]:
+) -> Result[tuple[float, np.ndarray, np.ndarray], str]:
     """
     Auxiliary function to maximize the Sharpe ratio for a given set of assets.
 
@@ -122,6 +122,7 @@ def maximize_sharpe_aux(
     """
     max_sharpe = float('-inf')
     optimal_weights = np.array([])
+    optimal_tickers_idxs = np.array([])
     for ticker_idx in tickers_idxs:
         weights = generate_weights(
             assets_per_portfolio, max_weight_per_asset, num_simulated_weights
@@ -139,7 +140,8 @@ def maximize_sharpe_aux(
         if sharpe > max_sharpe:
             max_sharpe = sharpe
             optimal_weights = weights
-    return Ok((max_sharpe, optimal_weights))
+            optimal_tickers_idxs = ticker_idx
+    return Ok((max_sharpe, optimal_weights, optimal_tickers_idxs))
 
 
 def run(  # noqa: PLR0913, PLR0917
@@ -149,7 +151,7 @@ def run(  # noqa: PLR0913, PLR0917
         num_simulated_weights: int,
         daily_returns_matrix: np.ndarray,
         num_simulations: int | None = None
-) -> Result[tuple[float, np.ndarray], str]:
+) -> Result[tuple[float, np.ndarray, np.ndarray], str]:
     """
     Runs the simulation to maximize the Sharpe ratio.
 
@@ -177,8 +179,7 @@ def run(  # noqa: PLR0913, PLR0917
     else:
         portfolios_idxs = portfolios_idxs.value
 
-    # n_processes = mp.cpu_count()
-    n_processes = 1
+    n_processes = mp.cpu_count()
     batch_size = len(portfolios_idxs) // n_processes + 1
     idxs_batches = [
         portfolios_idxs[i:i + batch_size] for i in range(0, len(portfolios_idxs), batch_size)
@@ -199,16 +200,20 @@ def run(  # noqa: PLR0913, PLR0917
             ]
         )
 
+    print(f"Number of results: {len(results)}")
+
     max_sharpe = float('-inf')
     optimal_weights = np.array([])
+    optimal_tickers_idxs = np.array([])
 
     for result in results:
         if isinstance(result, Err):
             return result
 
-        sharpe, weights = result.value
+        sharpe, weights, tickers_idxs = result.value
         if sharpe > max_sharpe:
             max_sharpe = sharpe
             optimal_weights = weights
+            optimal_tickers_idxs = tickers_idxs
 
-    return Ok((max_sharpe, optimal_weights))
+    return Ok((max_sharpe, optimal_weights, optimal_tickers_idxs))

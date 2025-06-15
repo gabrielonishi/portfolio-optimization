@@ -163,7 +163,7 @@ def _save_daily_returns_to_file(
         return Err(f"Failed to save daily returns to {file_path}: {e}")
 
 
-def load_daily_returns_from_file(file_path: pathlib.Path) -> Result[np.ndarray, str]:
+def load_daily_returns_from_file(file_path: pathlib.Path) -> Result[tuple[list[str], np.ndarray], str]:
     """
     Loads daily returns from a file using pickle.
 
@@ -179,14 +179,15 @@ def load_daily_returns_from_file(file_path: pathlib.Path) -> Result[np.ndarray, 
             daily_returns_dict = pickle.load(f)
             daily_returns_matrix = np.stack([daily_returns_dict[ticker]
                                              for ticker in daily_returns_dict.keys()])
-        return Ok(daily_returns_matrix)
+            tickers = list(daily_returns_dict.keys())
+        return Ok((tickers, daily_returns_matrix))
     except Exception as e:
         return Err(f"Failed to load daily returns from {file_path}: {e}")
 
 
 def run(start_date: date,
         end_date: date,
-        saved_copy_filepath: pathlib.Path | None = None):
+        saved_copy_filepath: pathlib.Path | None = None) -> Result[tuple[list[str], np.ndarray], str]:
 
     tickers = _fetch_tickers_from_wikipedia()
     if isinstance(tickers, Err):
@@ -208,4 +209,6 @@ def run(start_date: date,
     daily_returns_matrix = np.stack([daily_returns_dict.value[ticker]
                                      for ticker in daily_returns_dict.value.keys()])
 
-    return Ok(daily_returns_matrix)
+    tickers = list(daily_returns_dict.value.keys())
+
+    return Ok((tickers, daily_returns_matrix))

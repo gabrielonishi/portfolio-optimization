@@ -1,5 +1,6 @@
 import multiprocessing as mp
 from itertools import combinations
+from multiprocessing.shared_memory import SharedMemory
 
 import numpy as np
 
@@ -77,8 +78,16 @@ def generate_weights(
 def maximize_sharpe(
         tickers_idxs: np.ndarray,
         weights: np.ndarray,
-        daily_returns_matrix: np.ndarray,
+        shm_info: np.ndarray,
         Rf_yearly: float = 0.05) -> Result[tuple[float, np.ndarray], str]:
+
+    shm_name, shape, dtype = shm_info
+    shm = SharedMemory(name=shm_name)
+    daily_returns_matrix = np.ndarray(
+        shape,
+        dtype=dtype,
+        buffer=shm.buf
+    )
 
     ANNUALIZATION_FACTOR = 252
 
@@ -95,6 +104,8 @@ def maximize_sharpe(
 
     optimal_idx = np.argmax(SR)
 
+    shm.close()
+
     return Ok((SR[optimal_idx], weights[optimal_idx]))
 
 
@@ -103,7 +114,7 @@ def maximize_sharpe_aux(
         max_weight_per_asset: float,
         num_simulated_weights: int,
         tickers_idxs: np.ndarray,
-        daily_returns_matrix: np.ndarray
+        shm_info: np.ndarray
 ) -> Result[tuple[float, np.ndarray, np.ndarray], str]:
     """
     Auxiliary function to maximize the Sharpe ratio for a given set of assets.
@@ -132,7 +143,7 @@ def maximize_sharpe_aux(
         sharpe_result = maximize_sharpe(
             ticker_idx,
             weights.value,
-            daily_returns_matrix
+            shm_info
         )
         if isinstance(sharpe_result, Err):
             return sharpe_result
@@ -185,6 +196,20 @@ def run(  # noqa: PLR0913, PLR0917
         portfolios_idxs[i:i + batch_size] for i in range(0, len(portfolios_idxs), batch_size)
     ]
 
+    shm = SharedMemory(create=True, size=daily_returns_matrix.nbytes)
+    shm_returns = np.ndarray(
+        daily_returns_matrix.shape,
+        dtype=daily_returns_matrix.dtype,
+        buffer=shm.buf
+    )
+    np.copyto(shm_returns, daily_returns_matrix)
+
+    shm_info = (
+        shm.name,
+        daily_returns_matrix.shape,
+        daily_returns_matrix.dtype
+    )
+
     with mp.Pool(processes=n_processes) as pool:
         results = pool.starmap(
             maximize_sharpe_aux,
@@ -194,11 +219,14 @@ def run(  # noqa: PLR0913, PLR0917
                     max_weight_per_asset,
                     num_simulated_weights,
                     batch,
-                    daily_returns_matrix
+                    shm_info
                 )
                 for batch in idxs_batches
             ]
         )
+
+    shm.close()
+    shm.unlink()
 
     print(f"Number of results: {len(results)}")
 

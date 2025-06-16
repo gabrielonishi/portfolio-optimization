@@ -1,4 +1,5 @@
 import os
+
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
@@ -192,13 +193,14 @@ def run(  # noqa: PLR0913, PLR0917
     if isinstance(portfolios_idxs, Err):
         return portfolios_idxs
 
+    print(len(portfolios_idxs.value))
+
     if num_simulations is not None:
         portfolios_idxs = portfolios_idxs.value[:num_simulations]
     else:
         portfolios_idxs = portfolios_idxs.value
 
     n_processes = mp.cpu_count()
-    n_processes = 1
 
     batch_size = len(portfolios_idxs) // n_processes + 1
     idxs_batches = [

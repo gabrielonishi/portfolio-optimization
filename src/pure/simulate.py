@@ -1,3 +1,10 @@
+import os
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+
 import multiprocessing as mp
 from itertools import combinations
 from multiprocessing.shared_memory import SharedMemory
@@ -191,6 +198,8 @@ def run(  # noqa: PLR0913, PLR0917
         portfolios_idxs = portfolios_idxs.value
 
     n_processes = mp.cpu_count()
+    n_processes = 1
+
     batch_size = len(portfolios_idxs) // n_processes + 1
     idxs_batches = [
         portfolios_idxs[i:i + batch_size] for i in range(0, len(portfolios_idxs), batch_size)

@@ -44,6 +44,7 @@ def main() -> None:
     dow_tickers, daily_returns_matrix = data_loader_return.value
 
     start = time.time()
+    logger.info("Starting simulation...")
     sharpe_result = pure.simulate.run(
         assets_per_portfolio=settings['ASSETS_PER_PORTFOLIO'],
         total_assets=settings['TOTAL_ASSETS'],
@@ -52,6 +53,9 @@ def main() -> None:
         daily_returns_matrix=daily_returns_matrix,
         num_simulations=num_simulations
     )
+
+    logger.info("Simulation finished")
+
     if isinstance(sharpe_result, Err):
         logger.error(sharpe_result.error)
         sys.exit(1)

@@ -8,11 +8,11 @@ os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
 import multiprocessing as mp
 from itertools import combinations
-from multiprocessing.shared_memory import SharedMemory
 
 import numpy as np
 
 from pure.result import Err, Ok, Result
+from pure.safe_shared_memory import SafeSharedMemory
 
 
 def generates_portfolios_by_idxs(assets_per_portfolio: int, total_assets: int) -> Result[np.ndarray, str]:
@@ -35,8 +35,9 @@ def generates_portfolios_by_idxs(assets_per_portfolio: int, total_assets: int) -
         return Err("assets_per_portfolio cannot be greater than total_assets.")
 
     portfolios = list(combinations(range(total_assets), assets_per_portfolio))
+    np_portfolios = np.array(portfolios, dtype=np.int8)
 
-    return Ok(np.array(portfolios))
+    return Ok(np_portfolios)
 
 
 def generate_weights(
@@ -90,29 +91,28 @@ def maximize_sharpe(
         Rf_yearly: float = 0.05) -> Result[tuple[float, np.ndarray], str]:
 
     shm_name, shape, dtype = shm_info
-    shm = SharedMemory(name=shm_name)
-    daily_returns_matrix = np.ndarray(
-        shape,
-        dtype=dtype,
-        buffer=shm.buf
-    )
 
-    ANNUALIZATION_FACTOR = 252
+    with SafeSharedMemory(name=shm_name, unlink=False) as shm:
+        daily_returns_matrix = np.ndarray(
+            shape,
+            dtype=dtype,
+            buffer=shm.buf
+        )
 
-    R_daily = daily_returns_matrix[tickers_idxs].T
-    Rp_daily = R_daily @ weights.T
-    Rp_yearly = np.mean(Rp_daily, axis=0) * ANNUALIZATION_FACTOR
-    ER_yearly = Rp_yearly - Rf_yearly
+        ANNUALIZATION_FACTOR = 252
 
-    cov_matrix = np.cov(R_daily, rowvar=False)
-    Var_daily = np.diag(weights @ cov_matrix @ weights.T)
-    Vol_yearly = np.sqrt(Var_daily * ANNUALIZATION_FACTOR)
+        R_daily = daily_returns_matrix[tickers_idxs].T
+        Rp_daily = R_daily @ weights.T
+        Rp_yearly = np.mean(Rp_daily, axis=0) * ANNUALIZATION_FACTOR
+        ER_yearly = Rp_yearly - Rf_yearly
 
-    SR = ER_yearly / Vol_yearly
+        cov_matrix = np.cov(R_daily, rowvar=False)
+        Var_daily = np.diag(weights @ cov_matrix @ weights.T)
+        Vol_yearly = np.sqrt(Var_daily * ANNUALIZATION_FACTOR)
 
-    optimal_idx = np.argmax(SR)
+        SR = ER_yearly / Vol_yearly
 
-    shm.close()
+        optimal_idx = np.argmax(SR)
 
     return Ok((SR[optimal_idx], weights[optimal_idx]))
 
@@ -139,9 +139,11 @@ def maximize_sharpe_aux(
                                                 and the corresponding weights on success, or an error
                                                 message on failure.
     """
+
     max_sharpe = float('-inf')
     optimal_weights = np.array([])
     optimal_tickers_idxs = np.array([])
+
     for ticker_idx in tickers_idxs:
         weights = generate_weights(
             assets_per_portfolio, max_weight_per_asset, num_simulated_weights
@@ -160,6 +162,7 @@ def maximize_sharpe_aux(
             max_sharpe = sharpe
             optimal_weights = weights
             optimal_tickers_idxs = ticker_idx
+
     return Ok((max_sharpe, optimal_weights, optimal_tickers_idxs))
 
 
@@ -190,12 +193,11 @@ def run(  # noqa: PLR0913, PLR0917
     portfolios_idxs = generates_portfolios_by_idxs(
         assets_per_portfolio, total_assets
     )
+
     if isinstance(portfolios_idxs, Err):
         return portfolios_idxs
 
-    print(len(portfolios_idxs.value))
-
-    if num_simulations is not None:
+    if num_simulations is not None and num_simulations != 0:
         portfolios_idxs = portfolios_idxs.value[:num_simulations]
     else:
         portfolios_idxs = portfolios_idxs.value
@@ -207,39 +209,38 @@ def run(  # noqa: PLR0913, PLR0917
         portfolios_idxs[i:i + batch_size] for i in range(0, len(portfolios_idxs), batch_size)
     ]
 
-    shm = SharedMemory(create=True, size=daily_returns_matrix.nbytes)
-    shm_returns = np.ndarray(
-        daily_returns_matrix.shape,
-        dtype=daily_returns_matrix.dtype,
-        buffer=shm.buf
-    )
-    np.copyto(shm_returns, daily_returns_matrix)
+    with SafeSharedMemory(
+            create=True,
+            size=daily_returns_matrix.nbytes,
+            unlink=True
+    ) as shm:
+        shm_returns = np.ndarray(
+            daily_returns_matrix.shape,
+            dtype=daily_returns_matrix.dtype,
+            buffer=shm.buf
+        )
+        np.copyto(shm_returns, daily_returns_matrix)
 
-    shm_info = (
-        shm.name,
-        daily_returns_matrix.shape,
-        daily_returns_matrix.dtype
-    )
-
-    with mp.Pool(processes=n_processes) as pool:
-        results = pool.starmap(
-            maximize_sharpe_aux,
-            [
-                (
-                    assets_per_portfolio,
-                    max_weight_per_asset,
-                    num_simulated_weights,
-                    batch,
-                    shm_info
-                )
-                for batch in idxs_batches
-            ]
+        shm_info = (
+            shm.name,
+            daily_returns_matrix.shape,
+            daily_returns_matrix.dtype
         )
 
-    shm.close()
-    shm.unlink()
-
-    print(f"Number of results: {len(results)}")
+        with mp.Pool(processes=n_processes) as pool:
+            results = pool.starmap(
+                maximize_sharpe_aux,
+                [
+                    (
+                        assets_per_portfolio,
+                        max_weight_per_asset,
+                        num_simulated_weights,
+                        batch,
+                        shm_info
+                    )
+                    for batch in idxs_batches
+                ]
+            )
 
     max_sharpe = float('-inf')
     optimal_weights = np.array([])

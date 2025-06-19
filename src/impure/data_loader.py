@@ -9,6 +9,7 @@ import pandas as pd
 import requests
 import yfinance as yf
 
+import pure.data_loader as utils
 from pure.result import Err, Ok, Result
 
 logger = logging.getLogger(__name__)
@@ -39,25 +40,6 @@ def _fetch_tables_from_url(url: str) -> Result[list[pd.DataFrame], str]:
         return Err(f"Failed to fetch data from {url}: {e}")
 
 
-def _get_tickers_from_table(tables: list[pd.DataFrame]) -> Result[list[str], str]:
-    """
-    Extracts tickers from a given DataFrame.
-
-    Args:
-        table (pd.DataFrame): The DataFrame containing the tickers.
-
-    Returns:
-        Result[list[str], str]: A Result object containing the list of tickers on success,
-                                or an error message on failure.
-    """
-
-    for table in tables:
-        if 'Company' in table and 'Exchange' in table and 'Symbol' in table:
-            return Ok(list(table['Symbol']))
-
-    return Err("No valid table found with 'Company', 'Exchange', and 'Symbol' columns.")
-
-
 def _fetch_tickers_from_wikipedia() -> Result[list[str], str]:
 
     DOW_JONES_WIKI_URL = 'https://en.wikipedia.org/wiki/Dow_Jones_Industrial_Average'
@@ -67,7 +49,7 @@ def _fetch_tickers_from_wikipedia() -> Result[list[str], str]:
         logger.error(tables.error)
         return tables
 
-    tickers = _get_tickers_from_table(tables.value)
+    tickers = utils.get_tickers_from_table(tables.value)
     if isinstance(tickers, Err):
         logger.error(tickers.error)
         return tickers
@@ -103,16 +85,13 @@ def _load_ticker_data(ticker: str, start_date: date, end_date: date) -> Result[p
 
 def _calculate_daily_returns(ticker: str, start_date: date, end_date: date):
     ticker_data = _load_ticker_data(ticker, start_date, end_date)
+
     if isinstance(ticker_data, Err):
         logger.error(ticker_data.error)
         return ticker_data
 
     ticker_df = ticker_data.value
-    if 'Close' not in ticker_df.columns or ticker_df['Close'].empty:
-        return Err(f"No 'Close' column found in data for ticker {ticker}.")
-
-    daily_returns = ticker_df['Close'] / ticker_df['Close'].shift(1) - 1
-    array_returns = np.array(daily_returns[ticker][1:], dtype=np.float64)
+    array_returns = utils.calculate_daily_returns(ticker, ticker_df)
 
     return Ok(array_returns)
 

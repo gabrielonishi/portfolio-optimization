@@ -16,7 +16,7 @@ from pure.result import Err
 ENV = 'TEST'
 
 
-def main() -> None:
+def main() -> None:  # noqa: PLR0914
     root_dir = pathlib.Path(sys.argv[0]).parent.parent.resolve()
     logger = config.setup_logging(
         root_dir / "config" / "logging.yaml", logging_name="dev")
@@ -48,6 +48,7 @@ def main() -> None:
         logger.error(data_loader_return.error)
         sys.exit(1)
 
+    num_processes = settings['NUM_PROCESSES']
     dow_tickers, daily_returns_matrix = data_loader_return.value
 
     start = time.time()
@@ -58,7 +59,8 @@ def main() -> None:
         max_weight_per_asset=settings['MAX_WEIGHT_PER_ASSET'],
         num_simulated_weights=settings['NUM_SIMULATED_WEIGHTS'],
         daily_returns_matrix=daily_returns_matrix,
-        num_simulations=num_simulations
+        num_simulations=num_simulations,
+        num_processes=num_processes
     )
 
     logger.info("Simulation finished")

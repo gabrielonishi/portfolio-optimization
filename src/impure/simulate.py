@@ -82,13 +82,104 @@ def maximize_sharpe_aux(
     return Ok((max_sharpe, optimal_weights, optimal_tickers_idxs))
 
 
+def run_single_process(
+        assets_per_portfolio: int,
+        max_weight_per_asset: float,
+        num_simulated_weights: int,
+        portfolios_idxs: np.ndarray,
+        daily_returns_matrix: np.ndarray,
+) -> Result[tuple[float, np.ndarray, np.ndarray], str]:
+    max_sharpe = float('-inf')
+    optimal_weights = np.array([])
+    optimal_tickers_idxs = np.array([])
+
+    for portfolio_idxs in portfolios_idxs:
+        rng = np.random.default_rng()
+        weights = utils.generate_weights(
+            assets_per_portfolio, max_weight_per_asset, num_simulated_weights, rng
+        )
+        if isinstance(weights, Err):
+            return weights
+        sharpe_result = utils.maximize_sharpe(
+            portfolio_idxs,
+            weights.value,
+            daily_returns_matrix,
+        )
+        if isinstance(sharpe_result, Err):
+            return sharpe_result
+        sharpe, weights = sharpe_result.value
+        if sharpe > max_sharpe:
+            max_sharpe = sharpe
+            optimal_weights = weights
+            optimal_tickers_idxs = portfolio_idxs
+
+    return Ok((max_sharpe, optimal_weights, optimal_tickers_idxs))
+
+
+def run_multiprocess(  # noqa: PLR0913, PLR0917
+        assets_per_portfolio: int,
+        max_weight_per_asset: float,
+        num_simulated_weights: int,
+        portfolios_idxs: np.ndarray,
+        daily_returns_matrix: np.ndarray,
+        num_processes: int
+):
+    idxs_batches = []
+    batch_size = len(portfolios_idxs) // num_processes
+
+    for i in range(num_processes):
+        if i == num_processes - 1:
+            idxs_batches.append(portfolios_idxs[i * batch_size:])
+        else:
+            idxs_batches.append(
+                portfolios_idxs[i * batch_size:(i + 1) * batch_size])
+
+    with SafeSharedMemory(
+            create=True,
+            size=daily_returns_matrix.nbytes,
+            unlink=True
+    ) as shm:
+        shm_returns = np.ndarray(
+            daily_returns_matrix.shape,
+            dtype=daily_returns_matrix.dtype,
+            buffer=shm.buf
+        )
+        np.copyto(shm_returns, daily_returns_matrix)
+
+        shm_info = (
+            shm.name,
+            daily_returns_matrix.shape,
+            daily_returns_matrix.dtype
+        )
+
+        with mp.Pool(processes=num_processes) as pool:
+            results = pool.starmap(
+                maximize_sharpe_aux,
+                [
+                    (
+                        assets_per_portfolio,
+                        max_weight_per_asset,
+                        num_simulated_weights,
+                        batch,
+                        shm_info
+                    )
+                    for batch in idxs_batches
+                ]
+            )
+
+    max_results = utils.compare_process_results(results)
+
+    return max_results if isinstance(max_results, Err) else Ok(max_results.value)
+
+
 def run(  # noqa: PLR0913, PLR0917
         assets_per_portfolio: int,
         total_assets: int,
         max_weight_per_asset: float,
         num_simulated_weights: int,
         daily_returns_matrix: np.ndarray,
-        num_simulations: int | None = None
+        num_simulations: int | None = None,
+        num_processes: int = 0
 ) -> Result[tuple[float, np.ndarray, np.ndarray], str]:
     """
     Runs the simulation to maximize the Sharpe ratio.
@@ -118,50 +209,24 @@ def run(  # noqa: PLR0913, PLR0917
     else:
         portfolios_idxs = portfolios_idxs.value
 
-    n_processes = mp.cpu_count()
+    max_processes = mp.cpu_count()
+    if num_processes == 0 or num_processes > max_processes:
+        num_processes = max_processes
 
-    idxs_batches = []
-    batch_size = len(portfolios_idxs) // n_processes
-
-    for i in range(n_processes):
-        if i == n_processes - 1:
-            idxs_batches.append(portfolios_idxs[i * batch_size:])
-        else:
-            idxs_batches.append(portfolios_idxs[i * batch_size:(i + 1) * batch_size])
-
-    with SafeSharedMemory(
-            create=True,
-            size=daily_returns_matrix.nbytes,
-            unlink=True
-    ) as shm:
-        shm_returns = np.ndarray(
-            daily_returns_matrix.shape,
-            dtype=daily_returns_matrix.dtype,
-            buffer=shm.buf
+    if num_processes == 1:
+        return run_single_process(
+            assets_per_portfolio,
+            max_weight_per_asset,
+            num_simulated_weights,
+            portfolios_idxs,
+            daily_returns_matrix
         )
-        np.copyto(shm_returns, daily_returns_matrix)
-
-        shm_info = (
-            shm.name,
-            daily_returns_matrix.shape,
-            daily_returns_matrix.dtype
+    else:
+        return run_multiprocess(
+            assets_per_portfolio,
+            max_weight_per_asset,
+            num_simulated_weights,
+            portfolios_idxs,
+            daily_returns_matrix,
+            num_processes
         )
-
-        with mp.Pool(processes=n_processes) as pool:
-            results = pool.starmap(
-                maximize_sharpe_aux,
-                [
-                    (
-                        assets_per_portfolio,
-                        max_weight_per_asset,
-                        num_simulated_weights,
-                        batch,
-                        shm_info
-                    )
-                    for batch in idxs_batches
-                ]
-            )
-
-    max_results = utils.compare_process_results(results)
-
-    return max_results if isinstance(max_results, Err) else Ok(max_results.value)

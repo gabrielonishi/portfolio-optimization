@@ -1,9 +1,16 @@
+import os
+
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+
 import pathlib
 import sys
 import time
 
-import pure.simulate
-from impure import config, data_loader
+from impure import config, data_loader, simulate
 from pure.result import Err
 
 ENV = 'TEST'
@@ -45,7 +52,7 @@ def main() -> None:
 
     start = time.time()
     logger.info("Starting simulation...")
-    sharpe_result = pure.simulate.run(
+    sharpe_result = simulate.run(
         assets_per_portfolio=settings['ASSETS_PER_PORTFOLIO'],
         total_assets=settings['TOTAL_ASSETS'],
         max_weight_per_asset=settings['MAX_WEIGHT_PER_ASSET'],

@@ -1,18 +1,8 @@
-import os
-
-os.environ["OMP_NUM_THREADS"] = "1"
-os.environ["OPENBLAS_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
-os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
-os.environ["NUMEXPR_NUM_THREADS"] = "1"
-
-import multiprocessing as mp
 from itertools import combinations
 
 import numpy as np
 
 from pure.result import Err, Ok, Result
-from pure.safe_shared_memory import SafeSharedMemory
 
 
 def generates_portfolios_by_idxs(assets_per_portfolio: int, total_assets: int) -> Result[np.ndarray, str]:
@@ -43,7 +33,8 @@ def generates_portfolios_by_idxs(assets_per_portfolio: int, total_assets: int) -
 def generate_weights(
         assets_per_portfolio: int,
         max_weight_per_asset: float,
-        num_simulated_weights: int) -> Result[np.ndarray, str]:
+        num_simulated_weights: int,
+        rng: np.random.Generator) -> Result[np.ndarray, str]:
     '''
     Generates a matrix of random weights for portfolios.
     Args:
@@ -72,7 +63,7 @@ def generate_weights(
     while i < num_simulated_weights:
         spots_left = num_simulated_weights - i
         batch_size = int(BATCH_SIZE_MULTIPLIER * spots_left)
-        batch = np.random.dirichlet(alpha=portfolio_size, size=batch_size)
+        batch = rng.dirichlet(alpha=portfolio_size, size=batch_size)
         valid_weights = batch[np.all(batch <= max_weight_per_asset, axis=1)]
         spots_to_be_filled = min(len(valid_weights), num_simulated_weights - i)
 
@@ -87,161 +78,28 @@ def generate_weights(
 def maximize_sharpe(
         tickers_idxs: np.ndarray,
         weights: np.ndarray,
-        shm_info: np.ndarray,
+        daily_returns_matrix: np.ndarray,
         Rf_yearly: float = 0.05) -> Result[tuple[float, np.ndarray], str]:
 
-    shm_name, shape, dtype = shm_info
+    ANNUALIZATION_FACTOR = 252
 
-    with SafeSharedMemory(name=shm_name, unlink=False) as shm:
-        daily_returns_matrix = np.ndarray(
-            shape,
-            dtype=dtype,
-            buffer=shm.buf
-        )
+    R_daily = daily_returns_matrix[tickers_idxs].T
+    Rp_daily = R_daily @ weights.T
+    Rp_yearly = np.mean(Rp_daily, axis=0) * ANNUALIZATION_FACTOR
+    ER_yearly = Rp_yearly - Rf_yearly
 
-        ANNUALIZATION_FACTOR = 252
+    cov_matrix = np.cov(R_daily, rowvar=False)
+    Var_daily = np.diag(weights @ cov_matrix @ weights.T)
+    Vol_yearly = np.sqrt(Var_daily * ANNUALIZATION_FACTOR)
 
-        R_daily = daily_returns_matrix[tickers_idxs].T
-        Rp_daily = R_daily @ weights.T
-        Rp_yearly = np.mean(Rp_daily, axis=0) * ANNUALIZATION_FACTOR
-        ER_yearly = Rp_yearly - Rf_yearly
+    SR = ER_yearly / Vol_yearly
 
-        cov_matrix = np.cov(R_daily, rowvar=False)
-        Var_daily = np.diag(weights @ cov_matrix @ weights.T)
-        Vol_yearly = np.sqrt(Var_daily * ANNUALIZATION_FACTOR)
-
-        SR = ER_yearly / Vol_yearly
-
-        optimal_idx = np.argmax(SR)
+    optimal_idx = np.argmax(SR)
 
     return Ok((SR[optimal_idx], weights[optimal_idx]))
 
 
-def maximize_sharpe_aux(
-        assets_per_portfolio: int,
-        max_weight_per_asset: float,
-        num_simulated_weights: int,
-        tickers_idxs: np.ndarray,
-        shm_info: np.ndarray
-) -> Result[tuple[float, np.ndarray, np.ndarray], str]:
-    """
-    Auxiliary function to maximize the Sharpe ratio for a given set of assets.
-
-    Args:
-        assets_per_portfolio (int): Number of assets in each portfolio.
-        max_weight_per_asset (float): Maximum weight allowed for each asset.
-        num_simulated_weights (int): Number of weight combinations to generate.
-        tickers_idxs (np.ndarray): Indices of the assets in the portfolio.
-        daily_returns_matrix (np.ndarray): Daily returns matrix.
-
-    Returns:
-        Result[tuple[float, np.ndarray], str]: A Result object containing the maximum Sharpe ratio
-                                                and the corresponding weights on success, or an error
-                                                message on failure.
-    """
-
-    max_sharpe = float('-inf')
-    optimal_weights = np.array([])
-    optimal_tickers_idxs = np.array([])
-
-    for ticker_idx in tickers_idxs:
-        weights = generate_weights(
-            assets_per_portfolio, max_weight_per_asset, num_simulated_weights
-        )
-        if isinstance(weights, Err):
-            return weights
-        sharpe_result = maximize_sharpe(
-            ticker_idx,
-            weights.value,
-            shm_info
-        )
-        if isinstance(sharpe_result, Err):
-            return sharpe_result
-        sharpe, weights = sharpe_result.value
-        if sharpe > max_sharpe:
-            max_sharpe = sharpe
-            optimal_weights = weights
-            optimal_tickers_idxs = ticker_idx
-
-    return Ok((max_sharpe, optimal_weights, optimal_tickers_idxs))
-
-
-def run(  # noqa: PLR0913, PLR0917
-        assets_per_portfolio: int,
-        total_assets: int,
-        max_weight_per_asset: float,
-        num_simulated_weights: int,
-        daily_returns_matrix: np.ndarray,
-        num_simulations: int | None = None
-) -> Result[tuple[float, np.ndarray, np.ndarray], str]:
-    """
-    Runs the simulation to maximize the Sharpe ratio.
-
-    Args:
-        assets_per_portfolio (int): Number of assets in each portfolio.
-        total_assets (int): Total number of available assets.
-        max_weight_per_asset (float): Maximum weight allowed for each asset.
-        num_simulated_weights (int): Number of weight combinations to generate.
-        daily_returns_matrix (np.ndarray): Daily returns matrix.
-
-    Returns:
-        Result[tuple[float, np.ndarray], str]: A Result object containing the maximum Sharpe ratio
-                                                and the corresponding weights on success, or an error
-                                                message on failure.
-    """
-
-    portfolios_idxs = generates_portfolios_by_idxs(
-        assets_per_portfolio, total_assets
-    )
-
-    if isinstance(portfolios_idxs, Err):
-        return portfolios_idxs
-
-    if num_simulations is not None and num_simulations != 0:
-        portfolios_idxs = portfolios_idxs.value[:num_simulations]
-    else:
-        portfolios_idxs = portfolios_idxs.value
-
-    n_processes = mp.cpu_count()
-
-    batch_size = len(portfolios_idxs) // n_processes + 1
-    idxs_batches = [
-        portfolios_idxs[i:i + batch_size] for i in range(0, len(portfolios_idxs), batch_size)
-    ]
-
-    with SafeSharedMemory(
-            create=True,
-            size=daily_returns_matrix.nbytes,
-            unlink=True
-    ) as shm:
-        shm_returns = np.ndarray(
-            daily_returns_matrix.shape,
-            dtype=daily_returns_matrix.dtype,
-            buffer=shm.buf
-        )
-        np.copyto(shm_returns, daily_returns_matrix)
-
-        shm_info = (
-            shm.name,
-            daily_returns_matrix.shape,
-            daily_returns_matrix.dtype
-        )
-
-        with mp.Pool(processes=n_processes) as pool:
-            results = pool.starmap(
-                maximize_sharpe_aux,
-                [
-                    (
-                        assets_per_portfolio,
-                        max_weight_per_asset,
-                        num_simulated_weights,
-                        batch,
-                        shm_info
-                    )
-                    for batch in idxs_batches
-                ]
-            )
-
+def compare_process_results(results):
     max_sharpe = float('-inf')
     optimal_weights = np.array([])
     optimal_tickers_idxs = np.array([])

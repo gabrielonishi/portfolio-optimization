@@ -18,9 +18,11 @@ eval $(poetry env activate)
 poetry install
 ```
 
+Before running the project, take a look at the `config/settings.yaml` file. You can use it to setup number of processes and number of assets you wish to simulate, among other things.
+
 To run the project, run;
 ```bash
-python maximize_sharpe.py
+python src/main.py
 ```
 
 ### Symmetric Encryption
